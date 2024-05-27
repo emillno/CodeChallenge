@@ -18,6 +18,7 @@ builder.Services.AddHttpClient();
 // Register application services
 builder.Services.AddSingleton<IProductService, ProductService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
+builder.Services.AddSingleton<IBasketService, BasketService>();
 
 var app = builder.Build();
 

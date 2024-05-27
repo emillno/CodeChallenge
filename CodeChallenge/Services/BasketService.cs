@@ -21,13 +21,13 @@ public class BasketService : IBasketService
     private readonly ConcurrentDictionary<Guid, Basket> _baskets = new ConcurrentDictionary<Guid, Basket>();
     private readonly IHttpClientFactory _clientFactory;
     private readonly ITokenService _tokenService;
-    private readonly string _orderEndpoint;
+    private readonly string _createOrderEndpoint;
 
     public BasketService(IHttpClientFactory clientFactory, ITokenService tokenService, IConfiguration configuration)
     {
         _clientFactory = clientFactory;
         _tokenService = tokenService;
-        _orderEndpoint = $"{configuration["CodeChallengeApi:BaseUrl"]}/CreateOrder";
+        _createOrderEndpoint = $"{configuration["CodeChallengeApi:BaseUrl"]}/CreateOrder";
     }
 
     public Guid CreateBasket(Product product)
@@ -76,9 +76,7 @@ public class BasketService : IBasketService
     {
         var item = basket.Items.Find(i => i.ProductId == productId);
         if (item != null)
-        {
             basket.Items.Remove(item);
-        }
     }
 
     public void UpdateProductQuantity(Basket basket, int productId, int quantity)
@@ -123,22 +121,17 @@ public class BasketService : IBasketService
         };
 
         var response = await client.PostAsync(
-            _orderEndpoint,
+            _createOrderEndpoint,
             new StringContent(JsonSerializer.Serialize(createOrderRequest), System.Text.Encoding.UTF8, "application/json")
         );
 
         if (!response.IsSuccessStatusCode)
-        {
             return null;
-        }
 
         var content = await response.Content.ReadAsStringAsync();
         var orderResponse = JsonSerializer.Deserialize<JsonElement>(content);
         return orderResponse.GetProperty("orderId").GetString();
     }
 
-    public void RemoveBasket(Guid id)
-    {
-        _baskets.TryRemove(id, out _);
-    }
+    public void RemoveBasket(Guid id) => _baskets.TryRemove(id, out _);
 }

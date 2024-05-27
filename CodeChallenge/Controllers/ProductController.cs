@@ -24,10 +24,8 @@ namespace CodeChallenge.Controllers
         [HttpGet("ProductsSortedByPrice")]
         public async Task<IActionResult> GetProductsSortedByPrice(int page, int pageSize)
         {
-            if (pageSize > 1000)
-            {
+            if (pageSize > 1000) 
                 return BadRequest("Page size cannot exceed 1000.");
-            }
 
             var products = await _productService.GetSortedProductsByPrice(page, pageSize);
             return Ok(products);

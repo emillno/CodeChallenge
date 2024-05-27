@@ -10,9 +10,9 @@ public interface IBasketService
     Guid CreateBasket(Product product);
     Basket? GetBasket(Guid id);
     void AddProductToBasket(Basket basket, Product product);
-    void RemoveProductFromBasket(Basket basket, Product product);
+    void RemoveProductFromBasket(Basket basket, int productId);
     void UpdateProductQuantity(Basket basket, int productId, int quantity);
-    Task<bool> SubmitOrder(Basket basket, string userEmail);
+    Task<string?> SubmitOrder(Basket basket, string userEmail);
     void RemoveBasket(Guid id);
 }
 
@@ -27,13 +27,21 @@ public class BasketService : IBasketService
     {
         _clientFactory = clientFactory;
         _tokenService = tokenService;
-        _orderEndpoint = $"{configuration["CodeChallengeApi:BaseUrl"]}/api/CreateOrder";
+        _orderEndpoint = $"{configuration["CodeChallengeApi:BaseUrl"]}/CreateOrder";
     }
 
     public Guid CreateBasket(Product product)
     {
         var id = Guid.NewGuid();
-        var basket = new Basket { Id = id, Products = new List<Product> { product }, CreatedAt = DateTime.UtcNow };
+        var basketItem = new BasketItem
+        {
+            ProductId = product.Id,
+            Name = product.Name,
+            Price = product.Price,
+            Size = product.Size,
+            Quantity = 1
+        };
+        var basket = new Basket { Id = id, Items = new List<BasketItem> { basketItem }, CreatedAt = DateTime.UtcNow };
         _baskets[id] = basket;
         return id;
     }
@@ -44,73 +52,93 @@ public class BasketService : IBasketService
         return basket;
     }
 
-    public void AddProductToBasket(Basket basket, Product product) 
-        => basket.Products.Add(product);
+    public void AddProductToBasket(Basket basket, Product product)
+    {
+        var existingItem = basket.Items.Find(i => i.ProductId == product.Id);
+        if (existingItem != null)
+        {
+            existingItem.Quantity++;
+        }
+        else
+        {
+            basket.Items.Add(new BasketItem
+            {
+                ProductId = product.Id,
+                Name = product.Name,
+                Price = product.Price,
+                Size = product.Size,
+                Quantity = 1
+            });
+        }
+    }
 
-    public void RemoveProductFromBasket(Basket basket, Product product) 
-        => basket.Products.Remove(product);
+    public void RemoveProductFromBasket(Basket basket, int productId)
+    {
+        var item = basket.Items.Find(i => i.ProductId == productId);
+        if (item != null)
+        {
+            basket.Items.Remove(item);
+        }
+    }
 
     public void UpdateProductQuantity(Basket basket, int productId, int quantity)
+    {
+        var item = basket.Items.Find(i => i.ProductId == productId);
+        if (item == null)
         {
-            var product = basket.Products.Find(p => p.Id == productId);
-            if (product == null)
-            {
-                throw new Exception("Product not found in basket");
-            }
-
-            var currentCount = basket.Products.Count(p => p.Id == productId);
-            if (quantity <= 0)
-            {
-                basket.Products.RemoveAll(p => p.Id == productId);
-            }
-            else if (quantity > currentCount)
-            {
-                var additionalProducts = Enumerable.Repeat(product, quantity - currentCount);
-                basket.Products.AddRange(additionalProducts);
-            }
-            else
-            {
-                var removeCount = currentCount - quantity;
-                for (int i = 0; i < removeCount; i++)
-                {
-                    basket.Products.Remove(product);
-                }
-            }
+            throw new Exception("Product not found in basket");
         }
 
-        public async Task<bool> SubmitOrder(Basket basket, string userEmail)
+        if (quantity <= 0)
         {
-            var client = _clientFactory.CreateClient();
-            var token = await _tokenService.GetTokenAsync();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            basket.Items.Remove(item);
+        }
+        else
+        {
+            item.Quantity = quantity;
+        }
+    }
 
-            var orderLines = basket.Products.GroupBy(p => p.Id).Select(g => new OrderLine
-            {
-                ProductId = g.Key,
-                ProductName = g.First().Name,
-                ProductUnitPrice = g.First().Price,
-                ProductSize = g.First().Size.ToString(),
-                Quantity = g.Count(),
-                TotalPrice = g.Sum(p => p.Price)
-            }).ToList();
+    public async Task<string?> SubmitOrder(Basket basket, string userEmail)
+    {
+        var client = _clientFactory.CreateClient();
+        var token = await _tokenService.GetTokenAsync();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            var totalAmount = orderLines.Sum(ol => ol.TotalPrice);
+        var orderLines = basket.Items.Select(i => new OrderLine
+        {
+            ProductId = i.ProductId,
+            ProductName = i.Name,
+            ProductUnitPrice = i.Price,
+            ProductSize = i.Size.ToString(),
+            Quantity = i.Quantity,
+            TotalPrice = i.Price * i.Quantity
+        }).ToList();
 
-            var createOrderRequest = new CreateOrderRequest
-            {
-                UserEmail = userEmail,
-                TotalAmount = totalAmount,
-                OrderLines = orderLines
-            };
+        var createOrderRequest = new CreateOrderRequest
+        {
+            UserEmail = userEmail,
+            TotalAmount = orderLines.Sum(ol => ol.TotalPrice),
+            OrderLines = orderLines
+        };
 
-            var response = await client.PostAsync(
-                _orderEndpoint,
-                new StringContent(JsonSerializer.Serialize(createOrderRequest), System.Text.Encoding.UTF8, "application/json")
-            );
+        var response = await client.PostAsync(
+            _orderEndpoint,
+            new StringContent(JsonSerializer.Serialize(createOrderRequest), System.Text.Encoding.UTF8, "application/json")
+        );
 
-            return response.IsSuccessStatusCode;
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
         }
 
-        public void RemoveBasket(Guid id) 
-            => _baskets.TryRemove(id, out _);
+        var content = await response.Content.ReadAsStringAsync();
+        var orderResponse = JsonSerializer.Deserialize<JsonElement>(content);
+        return orderResponse.GetProperty("orderId").GetString();
+    }
+
+    public void RemoveBasket(Guid id)
+    {
+        _baskets.TryRemove(id, out _);
+    }
 }
